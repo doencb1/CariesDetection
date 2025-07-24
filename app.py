@@ -15,7 +15,7 @@ from torchvision.models.detection.rpn import AnchorGenerator
 from torchvision.ops import MultiScaleRoIAlign, nms
 
 app = Flask(__name__)
-app.secret_key = "truongquocbao"
+app.secret_key = "SECRET_KEY"
 UPLOAD_FOLDER = os.path.join("static", "uploads")
 DB_PATH = "history.db"
 MODEL_PATH = "faster_rcnn_caries_final_boosted_label2.pth"
