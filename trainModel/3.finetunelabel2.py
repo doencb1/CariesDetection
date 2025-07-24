@@ -1,0 +1,138 @@
+import os
+import json
+import numpy as np
+from PIL import Image
+from collections import Counter
+
+import torch
+import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader
+from torchvision.models.detection import FasterRCNN
+from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
+from torchvision.models.detection.rpn import AnchorGenerator
+from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
+from torchvision.ops import MultiScaleRoIAlign
+from torchvision.transforms import functional as F
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+
+class Label2OnlyDataset(Dataset):
+    def __init__(self, image_dir, json_dir, transforms=None):
+        self.image_dir = image_dir
+        self.json_dir = json_dir
+        self.transforms = transforms
+        self.image_files = []
+        for f in os.listdir(image_dir):
+            if not f.endswith(".jpg"): continue
+            json_path = os.path.join(json_dir, f.replace(".jpg", ".json"))
+            if not os.path.exists(json_path): continue
+            with open(json_path) as jf:
+                data = json.load(jf)
+                labels = [s['label'] for s in data['shapes']]
+                if '2' in labels:
+                    self.image_files.append(f)
+
+    def __len__(self):
+        return len(self.image_files)
+
+    def __getitem__(self, idx):
+        img_name = self.image_files[idx]
+        img_path = os.path.join(self.image_dir, img_name)
+        json_path = os.path.join(self.json_dir, img_name.replace(".jpg", ".json"))
+
+        image = np.array(Image.open(img_path).convert("RGB"))
+        height, width, _ = image.shape
+
+        boxes, labels = [], []
+        with open(json_path) as f:
+            data = json.load(f)
+            for shape in data['shapes']:
+                if shape['label'] != '2': continue
+                x1, y1 = shape['points'][0]
+                x2, y2 = shape['points'][1]
+                x_min, y_min = min(x1,x2), min(y1,y2)
+                x_max, y_max = max(x1,x2), max(y1,y2)
+
+                x_min = max(0, min(x_min, width - 1))
+                x_max = max(0, min(x_max, width - 1))
+                y_min = max(0, min(y_min, height - 1))
+                y_max = max(0, min(y_max, height - 1))
+
+                if x_max <= x_min or y_max <= y_min: continue
+
+                boxes.append([x_min, y_min, x_max, y_max])
+                labels.append(2)
+
+        if len(boxes) == 0:
+            return self.__getitem__((idx + 1) % len(self.image_files))
+
+        if self.transforms:
+            transformed = self.transforms(image=image, bboxes=boxes, labels=labels)
+            image = transformed['image']
+            boxes = torch.tensor(transformed['bboxes'], dtype=torch.float32)
+            labels = torch.tensor(transformed['labels'], dtype=torch.int64)
+        else:
+            image = F.to_tensor(image)
+            boxes = torch.tensor(boxes, dtype=torch.float32)
+            labels = torch.tensor(labels, dtype=torch.int64)
+
+        target = {"boxes": boxes, "labels": labels, "image_id": torch.tensor([idx])}
+        return image, target
+
+def get_transform():
+    return A.Compose([
+        A.HorizontalFlip(p=0.5),
+        A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.1, rotate_limit=15, p=0.7),
+        A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+        ToTensorV2()
+    ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=['labels'], min_visibility=0.0))
+
+def get_model(num_classes=3):
+    backbone = resnet_fpn_backbone('resnet50', pretrained=False)
+    anchor_generator = AnchorGenerator(
+        sizes=((32,), (64,), (128,), (256,), (512,)),
+        aspect_ratios=((0.5, 1.0, 2.0),) * 5
+    )
+    roi_pooler = MultiScaleRoIAlign(featmap_names=['0','1','2','3'], output_size=7, sampling_ratio=2)
+    model = FasterRCNN(
+        backbone,
+        num_classes=num_classes,
+        rpn_anchor_generator=anchor_generator,
+        box_roi_pool=roi_pooler
+    )
+    return model
+
+if __name__ == '__main__':
+    image_folder = "C:/thuctap_test/data_thay"
+    model_path = "faster_rcnn_caries_focal_sampler_longer.pth"
+
+    dataset = Label2OnlyDataset(image_folder, image_folder, transforms=get_transform())
+    loader = DataLoader(dataset, batch_size=2, shuffle=True, collate_fn=lambda x: tuple(zip(*x)))
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = get_model(num_classes=3)
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.to(device)
+
+    for param in model.backbone.parameters():
+        param.requires_grad = False
+
+    optimizer = torch.optim.SGD(model.roi_heads.box_predictor.parameters(), lr=0.001, momentum=0.9)
+
+    model.train()
+    for epoch in range(8):
+        total_loss = 0
+        for images, targets in loader:
+            images = [img.to(device) for img in images]
+            targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+            loss_dict = model(images, targets)
+            loss = sum(loss for loss in loss_dict.values())
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item()
+        print(f"[Epoch {epoch+1}/8] Loss: {total_loss / len(loader):.4f}")
+
+    torch.save(model.state_dict(), "faster_rcnn_caries_finetuned_label2_headonly.pth")

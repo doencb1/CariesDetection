@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Chẩn đoán sâu răng</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+  <style>
+    body { 
+      background: #f0f2f5; 
+      font-family: 'Segoe UI', sans-serif; 
+      overflow-x: hidden; 
+    }
+    #sidebar { 
+      width: 60px; 
+      transition: width 0.4s; 
+      overflow-x: hidden; 
+    }
+    #sidebar:hover { 
+      width: 180px; 
+    }
+    #sidebar:hover .sidebar-label { 
+      display: inline;
+      overflow: hidden; 
+      white-space: nowrap; 
+      text-overflow: ellipsis; 
+    }
+    .sidebar-label { 
+      display: none; 
+    }
+    #main-content { 
+      margin-left: 60px; 
+      transition: margin-left 0.4s; 
+    }
+    #sidebar:hover ~ #main-content { 
+      margin-left: 180px; 
+    }
+
+    #loading-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(255,255,255,0.9);
+      z-index: 9999;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .magnify {
+      width: 80px;
+      height: 80px;
+      border: 5px solid #007bff;
+      border-radius: 50%;
+      animation: zoomIn 2s ease-in-out infinite;
+    }
+
+    @keyframes zoomIn {
+      0% { transform: scale(1); opacity: 0.8; }
+      50% { transform: scale(1.4); opacity: 1; }
+      100% { transform: scale(1); opacity: 0.8; }
+    }
+  </style>
+</head>
+<body>
+  <div id="sidebar" class="position-fixed top-0 start-0 vh-100 bg-dark text-white px-3">
+    <ul class="nav flex-column pt-3">
+      <li class="nav-item mb-3">
+        <a class="nav-link text-white d-flex align-items-center" href="/"><i class="fas fa-tooth"></i> <div class="sidebar-label ms-2">Chẩn đoán</div></a>
+      </li>
+      <li class="nav-item mb-3">
+        <a class="nav-link text-white" href="/history"><i class="fas fa-clock"></i> <div class="sidebar-label ms-2">Lịch sử</div></a>
+      </li>
+    </ul>
+  </div>
+
+  <div id="main-content" class="p-4">
+    <div class="container d-flex justify-content-center align-items-center" style="height: 100vh;">
+      <form id="form" method="POST" enctype="multipart/form-data" class="bg-white p-5 rounded shadow" style="width: 100%; max-width: 500px;">
+        <h4 class="text-center mb-4">Chẩn đoán sâu răng</h4>
+        <div class="mb-3">
+          <label class="form-label">Tên bệnh nhân</label>
+          <input type="text" name="name" class="form-control" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Giới tính</label>
+          <select name="gender" class="form-select">
+            <option>Nam</option>
+            <option>Nữ</option>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Nơi ở</label>
+          <input type="text" name="location" class="form-control" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Tải ảnh</label>
+          <input type="file" name="images" class="form-control" multiple required>
+        </div>
+        <button class="btn btn-primary w-100" type="submit">Chẩn đoán</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="loading-overlay">
+    <div class="magnify"></div>
+  </div>
+
+  <script>
+    const form = document.getElementById("form");
+    const overlay = document.getElementById("loading-overlay");
+
+    form.addEventListener("submit", function(e) {
+      e.preventDefault();
+      overlay.style.display = "flex";
+      const formData = new FormData(form);
+      const patientInfo = {
+        name: formData.get("name"),
+        gender: formData.get("gender"),
+        location: formData.get("location")
+      };
+      sessionStorage.setItem("patient_info", JSON.stringify(patientInfo));
+
+      fetch("/", {
+        method: "POST",
+        body: formData
+      }).then(() => {
+        fetch("/process", { method: "POST" })
+          .then(() => {
+            setTimeout(() => {
+              window.location.href = "/result";
+            }, 1200);
+          });
+      });
+    });
+
+    const sidebar = document.getElementById('sidebar');
+    const main = document.getElementById('main-content');
+    let timeout;
+    sidebar.addEventListener('mouseenter', () => {
+      clearTimeout(timeout);
+      sidebar.style.width = '180px';
+      main.style.marginLeft = '180px';
+      document.querySelectorAll('.sidebar-label').forEach(el => el.style.display = 'inline');
+    });
+    sidebar.addEventListener('mouseleave', () => {
+      timeout = setTimeout(() => {
+        sidebar.style.width = '60px';
+        main.style.marginLeft = '60px';
+        document.querySelectorAll('.sidebar-label').forEach(el => el.style.display = 'none');
+      }, 1000);
+    }); 
+  </script>
+</body>
+</html>
